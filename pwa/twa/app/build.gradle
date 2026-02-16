@@ -1,0 +1,43 @@
+plugins {
+    id 'com.android.application'
+}
+
+android {
+    namespace 'com.termux.pwa'
+    compileSdk 34
+
+    defaultConfig {
+        applicationId "com.termux.pwa"
+        minSdk 23
+        targetSdk 34
+        versionCode 1
+        versionName "1.0.0"
+
+        // TWA configuration
+        manifestPlaceholders = [
+            hostName      : "your-domain.com",
+            defaultUrl    : "https://your-domain.com",
+            launcherName  : "Termux Web",
+            assetStatements: '[{"relation": ["delegate_permission/common.handle_all_urls"],' +
+                            '"target": {"namespace": "android_app",' +
+                            '"package_name": "com.termux.pwa",' +
+                            '"sha256_cert_fingerprints": ["REPLACE_WITH_YOUR_SIGNING_KEY_SHA256_FINGERPRINT"]}}]'
+        ]
+    }
+
+    buildTypes {
+        release {
+            minifyEnabled true
+            proguardFiles getDefaultProguardFile('proguard-android-optimize.txt')
+        }
+    }
+
+    compileOptions {
+        sourceCompatibility JavaVersion.VERSION_17
+        targetCompatibility JavaVersion.VERSION_17
+    }
+}
+
+dependencies {
+    implementation 'com.google.androidbrowserhelper:androidbrowserhelper:2.5.0'
+}
