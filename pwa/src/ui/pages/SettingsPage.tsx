@@ -12,6 +12,7 @@ export default function SettingsPage() {
   const [showImport, setShowImport] = useState(false);
   const [importName, setImportName] = useState('');
   const [importPem, setImportPem] = useState('');
+  const [importError, setImportError] = useState('');
   const [copiedId, setCopiedId] = useState<string | null>(null);
 
   useEffect(() => {
@@ -38,11 +39,16 @@ export default function SettingsPage() {
 
   const handleImport = async () => {
     if (!importName.trim() || !importPem.trim()) return;
-    const key = await importKeyFromPEM(importName.trim(), importPem.trim());
-    setKeys((prev) => [...prev, key]);
-    setShowImport(false);
-    setImportName('');
-    setImportPem('');
+    setImportError('');
+    try {
+      const key = await importKeyFromPEM(importName.trim(), importPem.trim());
+      setKeys((prev) => [...prev, key]);
+      setShowImport(false);
+      setImportName('');
+      setImportPem('');
+    } catch (err) {
+      setImportError(err instanceof Error ? err.message : 'Invalid key format');
+    }
   };
 
   const handleCopyPublicKey = async (key: SSHKey) => {
@@ -98,33 +104,99 @@ export default function SettingsPage() {
                 className="bg-terminal-border text-white text-sm rounded px-2 py-1"
               >
                 <option value="dark">Dark</option>
-                <option value="green">Green</option>
-                <option value="amber">Amber</option>
+                <option value="green">Green (Phosphor)</option>
+                <option value="amber">Amber (Phosphor)</option>
               </select>
+            </div>
+
+            <div className="flex items-center justify-between bg-terminal-surface rounded p-3">
+              <label className="text-sm text-white">Cursor Style</label>
+              <select
+                value={settings.cursorStyle}
+                onChange={(e) => updateSettings({ cursorStyle: e.target.value as 'block' | 'underline' | 'bar' })}
+                className="bg-terminal-border text-white text-sm rounded px-2 py-1"
+              >
+                <option value="block">Block</option>
+                <option value="underline">Underline</option>
+                <option value="bar">Bar</option>
+              </select>
+            </div>
+
+            <div className="flex items-center justify-between bg-terminal-surface rounded p-3">
+              <label className="text-sm text-white">Cursor Blink</label>
+              <input
+                type="checkbox"
+                checked={settings.cursorBlink}
+                onChange={(e) => updateSettings({ cursorBlink: e.target.checked })}
+                className="accent-terminal-green w-4 h-4"
+              />
+            </div>
+
+            <div className="flex items-center justify-between bg-terminal-surface rounded p-3">
+              <label className="text-sm text-white">Bell</label>
+              <select
+                value={settings.bellBehavior}
+                onChange={(e) => updateSettings({ bellBehavior: e.target.value as 'vibrate' | 'beep' | 'ignore' })}
+                className="bg-terminal-border text-white text-sm rounded px-2 py-1"
+              >
+                <option value="ignore">Ignore</option>
+                <option value="beep">Beep</option>
+                <option value="vibrate">Vibrate</option>
+              </select>
+            </div>
+
+            <div className="flex items-center justify-between bg-terminal-surface rounded p-3">
+              <label className="text-sm text-white">Scrollback Lines</label>
+              <input
+                type="number"
+                value={settings.scrollbackRows}
+                onChange={(e) => updateSettings({ scrollbackRows: Math.max(100, Math.min(50000, parseInt(e.target.value) || 1000)) })}
+                min={100}
+                max={50000}
+                step={100}
+                className="w-24 bg-terminal-bg border border-terminal-border rounded px-2 py-1 text-sm text-white text-right focus:outline-none focus:border-terminal-green"
+              />
             </div>
           </div>
         </section>
 
-        {/* Proxy Settings */}
+        {/* Connection Settings */}
         <section className="mb-8">
           <h2 className="text-sm font-semibold text-terminal-green uppercase tracking-wide mb-3">
-            WebSocket Proxy
+            Connection
           </h2>
-          <div className="bg-terminal-surface rounded p-3">
-            <label className="text-xs text-terminal-fg mb-1 block">Default Proxy URL</label>
-            <input
-              type="text"
-              value={settings.defaultProxyUrl}
-              onChange={(e) => updateSettings({ defaultProxyUrl: e.target.value })}
-              className="w-full bg-terminal-bg border border-terminal-border rounded px-3 py-2 text-sm text-white focus:outline-none focus:border-terminal-green"
-              placeholder="ws://localhost:8888"
-            />
-            <p className="text-xs text-terminal-fg/60 mt-2">
-              The WebSocket proxy bridges browser connections to SSH servers.
-              Install <span className="text-terminal-cyan">wstunnel</span> or{' '}
-              <span className="text-terminal-cyan">webssh2</span> on a machine with
-              network access to your SSH targets.
-            </p>
+          <div className="space-y-3">
+            <div className="bg-terminal-surface rounded p-3">
+              <label className="text-xs text-terminal-fg mb-1 block">Default Proxy URL</label>
+              <input
+                type="text"
+                value={settings.defaultProxyUrl}
+                onChange={(e) => updateSettings({ defaultProxyUrl: e.target.value })}
+                className="w-full bg-terminal-bg border border-terminal-border rounded px-3 py-2 text-sm text-white focus:outline-none focus:border-terminal-green"
+                placeholder="ws://localhost:8888"
+              />
+              <p className="text-xs text-terminal-fg/60 mt-2">
+                The WebSocket proxy bridges browser connections to SSH servers.
+                Run the included proxy server on a machine with network access
+                to your SSH targets.
+              </p>
+            </div>
+
+            <div className="flex items-center justify-between bg-terminal-surface rounded p-3">
+              <div>
+                <label className="text-sm text-white block">Connection Timeout</label>
+                <span className="text-xs text-terminal-fg/60">{settings.connectionTimeout / 1000}s</span>
+              </div>
+              <input
+                type="range"
+                min={5000}
+                max={30000}
+                step={1000}
+                value={settings.connectionTimeout}
+                onChange={(e) => updateSettings({ connectionTimeout: parseInt(e.target.value) })}
+                className="w-32 accent-terminal-green"
+              />
+            </div>
           </div>
         </section>
 
@@ -208,11 +280,14 @@ export default function SettingsPage() {
               />
               <textarea
                 value={importPem}
-                onChange={(e) => setImportPem(e.target.value)}
+                onChange={(e) => { setImportPem(e.target.value); setImportError(''); }}
                 placeholder="Paste private key PEM..."
                 rows={5}
                 className="w-full bg-terminal-bg border border-terminal-border rounded px-3 py-2 text-sm text-white font-mono focus:outline-none focus:border-terminal-green resize-none"
               />
+              {importError && (
+                <p className="text-xs text-terminal-red">{importError}</p>
+              )}
               <div className="flex gap-2">
                 <button
                   onClick={handleImport}
@@ -222,7 +297,7 @@ export default function SettingsPage() {
                   Import
                 </button>
                 <button
-                  onClick={() => { setShowImport(false); setImportName(''); setImportPem(''); }}
+                  onClick={() => { setShowImport(false); setImportName(''); setImportPem(''); setImportError(''); }}
                   className="px-3 py-1.5 text-sm text-terminal-fg hover:text-white"
                 >
                   Cancel

@@ -77,7 +77,7 @@ export async function getKey(id: string): Promise<SSHKey | undefined> {
 
 /**
  * Generate an RSA key pair using Web Crypto API,
- * then export as PEM strings for SSH use.
+ * then export as PEM (private) and OpenSSH (public) strings.
  */
 export async function generateKeyPair(name: string): Promise<SSHKey> {
   const keyPair = await crypto.subtle.generateKey(
@@ -94,13 +94,13 @@ export async function generateKeyPair(name: string): Promise<SSHKey> {
   const publicKeyDer = await crypto.subtle.exportKey('spki', keyPair.publicKey);
   const privateKeyDer = await crypto.subtle.exportKey('pkcs8', keyPair.privateKey);
 
-  const publicKeyPem = derToPem(publicKeyDer, 'PUBLIC KEY');
   const privateKeyPem = derToPem(privateKeyDer, 'PRIVATE KEY');
+  const publicKeyOpenSSH = spkiToOpenSSH(publicKeyDer, name);
 
   const key: SSHKey = {
     id: crypto.randomUUID(),
     name,
-    publicKey: publicKeyPem,
+    publicKey: publicKeyOpenSSH,
     privateKey: privateKeyPem,
     createdAt: Date.now(),
   };
@@ -116,16 +116,106 @@ function derToPem(der: ArrayBuffer, label: string): string {
 }
 
 /**
+ * Convert an SPKI DER public key to OpenSSH format (ssh-rsa AAAA... comment).
+ * Parses the ASN.1 to extract RSA modulus and exponent, then encodes
+ * in the SSH wire format: string "ssh-rsa" + mpint e + mpint n.
+ */
+function spkiToOpenSSH(spkiDer: ArrayBuffer, comment: string): string {
+  const data = new Uint8Array(spkiDer);
+
+  // Parse ASN.1 SEQUENCE -> SEQUENCE (algorithm) + BIT STRING (key data)
+  // The RSA public key is inside the BIT STRING, which itself contains
+  // a SEQUENCE of INTEGER (modulus) + INTEGER (exponent).
+  // We need to find the BIT STRING and parse the inner SEQUENCE.
+  let offset = 0;
+
+  function readTag(): { tag: number; length: number } {
+    const tag = data[offset++];
+    let length = data[offset++];
+    if (length & 0x80) {
+      const numBytes = length & 0x7f;
+      length = 0;
+      for (let i = 0; i < numBytes; i++) {
+        length = (length << 8) | data[offset++];
+      }
+    }
+    return { tag, length };
+  }
+
+  function readInteger(): Uint8Array {
+    const { tag, length } = readTag();
+    if (tag !== 0x02) throw new Error('Expected INTEGER');
+    const value = data.slice(offset, offset + length);
+    offset += length;
+    return value;
+  }
+
+  // Outer SEQUENCE
+  readTag(); // SEQUENCE
+  // Algorithm SEQUENCE
+  const algSeq = readTag(); // SEQUENCE
+  offset += algSeq.length; // Skip algorithm OID
+  // BIT STRING containing the public key
+  const bitString = readTag(); // BIT STRING
+  void bitString;
+  offset++; // Skip unused-bits byte (0x00)
+  // Inner SEQUENCE containing modulus + exponent
+  readTag(); // SEQUENCE
+  const modulus = readInteger();
+  const exponent = readInteger();
+
+  // Build SSH wire format: string "ssh-rsa" + mpint e + mpint n
+  function sshString(s: string): Uint8Array {
+    const encoded = new TextEncoder().encode(s);
+    const buf = new Uint8Array(4 + encoded.length);
+    new DataView(buf.buffer).setUint32(0, encoded.length);
+    buf.set(encoded, 4);
+    return buf;
+  }
+
+  function sshMpint(bytes: Uint8Array): Uint8Array {
+    // Prepend 0x00 if high bit is set (SSH mpint is signed)
+    const needsPad = bytes[0] & 0x80;
+    const length = bytes.length + (needsPad ? 1 : 0);
+    const buf = new Uint8Array(4 + length);
+    new DataView(buf.buffer).setUint32(0, length);
+    if (needsPad) {
+      buf[4] = 0;
+      buf.set(bytes, 5);
+    } else {
+      buf.set(bytes, 4);
+    }
+    return buf;
+  }
+
+  const keyType = sshString('ssh-rsa');
+  const e = sshMpint(exponent);
+  const n = sshMpint(modulus);
+
+  const blob = new Uint8Array(keyType.length + e.length + n.length);
+  blob.set(keyType, 0);
+  blob.set(e, keyType.length);
+  blob.set(n, keyType.length + e.length);
+
+  return `ssh-rsa ${btoa(String.fromCharCode(...blob))} ${comment}`;
+}
+
+/**
  * Import a PEM private key from a string.
- * Stores the raw PEM — no Web Crypto import needed since
- * the SSH proxy handles the actual SSH authentication.
+ * Validates PEM format before storing. The SSH proxy handles
+ * the actual SSH authentication using the raw PEM.
  */
 export async function importKeyFromPEM(name: string, privateKeyPem: string, publicKeyPem?: string): Promise<SSHKey> {
+  const trimmed = privateKeyPem.trim();
+  if (!trimmed.match(/^-----BEGIN .+ KEY-----/) || !trimmed.match(/-----END .+ KEY-----$/)) {
+    throw new Error('Invalid PEM format: must start with -----BEGIN ... KEY----- and end with -----END ... KEY-----');
+  }
+
   const key: SSHKey = {
     id: crypto.randomUUID(),
     name,
     publicKey: publicKeyPem || '(public key not provided)',
-    privateKey: privateKeyPem,
+    privateKey: trimmed,
     createdAt: Date.now(),
   };
 
